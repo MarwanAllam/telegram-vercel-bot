@@ -6,10 +6,5 @@
   "routes": [
     { "src": "/api", "dest": "/api/index.py" },
     { "src": "/api/(.*)", "dest": "/api/index.py" }
-  ],
-  "functions": {
-    "api/index.py": {
-      "runtime": "python3.11"
-    }
-  }
+  ]
 }
