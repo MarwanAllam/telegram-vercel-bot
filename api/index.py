@@ -10,24 +10,24 @@ from telegram.ext import (
 )
 
 # -----------------------------
-# ضع التوكن هنا كما طلبت
+# ضع التوكن هنا كما طلبت (مضمن داخل الكود)
 # -----------------------------
 TOKEN = "8246108964:AAGTQI8zQl6rXqhLVG7_8NyFj4YqO35dMVg"
 
 # -----------------------------
 # بيانات محلية (ملف JSON)
-# ملاحظة: في بيئة Serverless (Vercel) التخزين المحلي مؤقت (ephemeral).
-# إذا تحتاج بيانات ثابتة بين الدعوات استخدم DB خارجي (مثلاً Firebase, Supabase, أو ملف على S3).
+# ملاحظة: في بيئة Serverless (Vercel) التخزين المحلي "ephemeral" ويمكن أن يختفي بين الاستدعاءات.
+# إذا تحتاج بيانات ثابتة بين الدعوات استخدم DB خارجي (مثلاً Firebase, Supabase, أو S3).
 # -----------------------------
-DATA_FILE = "/tmp/data.json"  # /tmp أحيانًا يصلح للاختبار المؤقت في بعض رن타يمز
+DATA_FILE = "/tmp/data.json"
 
-# حاول تحميل user_channels من الملف (لو موجود)
 try:
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         user_channels = json.load(f)
         user_channels = {k: [int(cid) for cid in v] if isinstance(v, list) else v for k, v in user_channels.items()}
 except Exception:
     user_channels = {}
+
 
 def save_data():
     try:
@@ -45,6 +45,7 @@ awaiting_input = {}
 # -----------------------------
 # مساعدة للكيبورد والـ permissions
 # -----------------------------
+
 def make_main_keyboard(chat_id):
     return InlineKeyboardMarkup([
         [InlineKeyboardButton("📝 انضم / انسحب", callback_data=f"join|{chat_id}")],
@@ -55,21 +56,20 @@ def make_main_keyboard(chat_id):
         [InlineKeyboardButton("⭐ إدارة المشرفين", callback_data=f"manage_admins|{chat_id}")]
     ])
 
+
 def is_admin_or_creator(user_id, q):
     return user_id == q["creator"] or user_id in q["admins"]
 
 # -----------------------------
-# Handlers (نفس وظيفتك) - أهم حاجة تُبقيها كما هي
+# Handlers
 # -----------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
     text = (
         "أهلاً 👋\n"
         "استخدم /startrole في الخاص لبدء دور في قناة مربوطة أو استخدم /link لربط قناة."
     )
     await update.message.reply_text(text)
 
-# الربط، عرض القنوات، بدء الدور... (نسخة مصغرة من اللي بعته)
 async def link_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = str(update.effective_user.id)
     awaiting_input[user_id] = {"step": "link_channel", "creator_id": update.effective_user.id, "chat_id": update.effective_chat.id}
@@ -113,7 +113,6 @@ async def start_role(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-# جمع المعلومات وبدء الدور (مختصر)
 async def prompt_for_role(update: Update, context: ContextTypes.DEFAULT_TYPE, target_chat_id: int):
     if target_chat_id in queues and not queues[target_chat_id].get("closed", True):
         await context.bot.send_message(chat_id=update.effective_chat.id, text="⚠️ فيه دور شغال بالفعل في هذه القناة.")
@@ -131,8 +130,6 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_id = str(update.effective_user.id)
     user_input = update.message.text.strip()
-
-    # حالات الربط/فصل القنوات (بالمفتاح user_id)
     if user_id in awaiting_input and awaiting_input[user_id].get("creator_id") == update.effective_user.id:
         state = awaiting_input.pop(user_id)
         step = state["step"]
@@ -167,8 +164,6 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 await update.message.reply_text("❌ خطأ: تأكد من اسم القناة.")
             return
-
-    # حالات بدء الدور بالمفتاح chat_id (int)
     target_chat_id = None
     for chat_id, data in awaiting_input.items():
         if isinstance(chat_id, int) and data.get("creator_id") == update.effective_user.id:
@@ -176,7 +171,6 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
             break
     if target_chat_id is None:
         return
-
     step = awaiting_input[target_chat_id]["step"]
     if step == "teacher":
         awaiting_input[target_chat_id]["teacher"] = user_input
@@ -209,7 +203,6 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=target_chat_id, text=text, reply_markup=make_main_keyboard(target_chat_id), parse_mode="Markdown")
         await update.message.reply_text("✅ تم إنشاء الدور بنجاح في القناة!")
 
-# معالجة الأزرار (مختصر لأنك محفوظ اللوجيك كاملاً عندك)
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
@@ -222,13 +215,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("تم الاختيار، هبدأ جمع البيانات في الخاص")
         await prompt_for_role(update, context, target_chat_id)
         return
-    # الباقي منطقك كما هو — اختصرنا هنا للوضوح
-    # يمكنك استبدال الدالة هذه بالكاملة لديك إذا رغبت.
+    # بقى منطقك الكامل هنا لو حبيت تلزق الدالة الأصلية
 
-# أمر الإغلاق الموزع (مقتبس)
 async def force_close_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat.type == "private":
-        # عرض اختيار للقنوات كما في كودك الأصلي
         await update.message.reply_text("استخدم الواجهة الخاصة لإغلاق الدور.")
     else:
         chat_id = update.effective_chat.id
@@ -248,7 +238,7 @@ async def force_close_command(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text("✅ تم إغلاق الدور وإزالته من الذاكرة.")
 
 # -----------------------------
-# بناء الـ Application مرة واحدة (لا polling على Vercel)
+# إنشاء الـ Application وإضافة الـ handlers
 # -----------------------------
 application = ApplicationBuilder().token(TOKEN).build()
 application.add_handler(CommandHandler("start", start))
@@ -265,13 +255,29 @@ application.add_handler(CallbackQueryHandler(button))
 # -----------------------------
 app = FastAPI()
 
+@app.on_event("startup")
+async def on_startup():
+    try:
+        await application.initialize()
+        print("Application initialized successfully.")
+    except Exception as e:
+        print("Error during application.initialize():", e)
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    try:
+        await application.shutdown()
+        print("Application shutdown completed.")
+    except Exception as e:
+        print("Error during application shutdown:", e)
+
 @app.post("/api")
 async def telegram_webhook(request: Request):
-    """يتلقى تحديثات Telegram في شكل webhooks ويعالجها عبر python-telegram-bot application."""
     try:
         data = await request.json()
     except Exception:
         return JSONResponse(status_code=400, content={"status":"error","message":"Invalid JSON"})
+
     try:
         update = Update.de_json(data, application.bot)
         await application.process_update(update)
