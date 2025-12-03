@@ -276,20 +276,22 @@ application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, collect_
 # FastAPI app for Vercel
 app = FastAPI()
 
+# مؤقت للديباج — استبدل الـ handler الحالي وبعدين اعمل redeploy
 @app.post("/api")
-async def telegram_webhook(request: Request):
+async def telegram_webhook_debug(request: Request):
     try:
-        data = await request.json()
-    except Exception:
-        return {"status": "error", "message": "Invalid JSON"}, 400
-    try:
-        update = Update.de_json(data, application.bot)
-        await application.process_update(update)
-        return {"status": "ok"}
+        text = await request.body()
+        print("=== INCOMING WEBHOOK ===")
+        print("Headers:", dict(request.headers))
+        print("Body:", text.decode(errors="ignore"))
     except Exception as e:
-        print("Error processing update:", e)
-        return {"status": "error", "message": str(e)}, 500
+        print("Error reading request body:", e)
+
+    # رجع 200 وقول للتلجرام إننا استلمنا (مؤقت)
+    return {"status": "ok", "debug": True}
+
 
 @app.get("/api")
 async def root():
     return {"message": "Telegram Bot is ready to receive webhooks!"}
+
