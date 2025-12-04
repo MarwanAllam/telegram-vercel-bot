@@ -15,7 +15,6 @@ from telegram.error import BadRequest
 # 🔑 التوكن والإعدادات الخاصة بـ Vercel
 # -----------------------------
 # يستخدم os.environ للحصول على التوكن من متغيرات البيئة (الأكثر أمانًا)
-# يجب عليك وضع التوكن في إعدادات Vercel كمتغير بيئة باسم TOKEN
 TOKEN = os.environ.get("TOKEN", "8246108964:AAGTQI8zQl6rXqhLVG7_8NyFj4YqO35dMVg")
 
 DATA_FILE = "data.json"  # تنبيه: هذا التخزين مؤقت (Ephemeral) على Vercel ولن يدوم!
@@ -259,19 +258,13 @@ async def collect_info(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ----------------------------------------
-#        3. معالجة الأزرار (مع تثبيت التزامن)
+#        3. معالجة الأزرار (مع تثبيت التزامن وإعادة رسائل التأكيد)
 # ----------------------------------------
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if not query:
         return
-
-    # 1. الرد السريع لمنع خطأ "Query is too old"
-    try:
-        await query.answer() 
-    except Exception:
-        pass
 
     data = query.data or ""
     user = query.from_user
@@ -283,7 +276,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_chat_id = int(parts[1])
         except Exception:
+            await query.answer("❌ خطأ في بيانات القناة.")
             return
+        await query.answer("اخترت القناة. سيتم بدء إدخال البيانات.") # إعادة إشعار التأكيد
         await prompt_for_role(update, context, target_chat_id)
         return
 
@@ -291,8 +286,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             target_chat_id = int(parts[1])
         except Exception:
+            await query.answer("❌ خطأ في البيانات.")
             return
-        # تنفيذ منطق force_close_channel...
+        
         closed_queue_message = ""
         if target_chat_id in queues:
             del queues[target_chat_id]
@@ -301,11 +297,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             closed_queue_message = "⚠️ لم يكن هناك دور مفتوح في الذاكرة لهذه القناة."
         if target_chat_id in awaiting_input:
             del awaiting_input[target_chat_id]
+        
         try:
             ch = await context.bot.get_chat(target_chat_id)
             title = ch.title
         except Exception:
             title = "القناة المجهولة"
+            
+        await query.answer(closed_queue_message) # إعادة إشعار التأكيد
         await query.edit_message_text(
             f"🔒 **إغلاق إجباري مكتمل:**\nتم مسح بيانات الدور من الذاكرة لـ **{title}**.\n{closed_queue_message}",
             parse_mode="Markdown"
@@ -314,49 +313,70 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # نهاية المسارات التي لا تحتاج قفل
 
     if len(parts) < 2:
+        await query.answer("❌ خطأ في بيانات الزر.")
         return
     
     try:
         chat_id = int(parts[1])
     except Exception:
+        await query.answer("❌ خطأ في ID الدردشة.")
         return
 
     q = queues.get(chat_id)
     if not q:
-        return # الرسالة أصبحت قديمة، أو لا يوجد دور
+        await query.answer("❌ مفيش دور شغال في هذه القناة.")
+        return 
 
-    # 2. Debounce: منع الضغطة السريعة المتكررة (COOLDOWN)
+    # 1. Debounce: منع الضغطة السريعة المتكررة (COOLDOWN)
     now = time.time()
     last = last_action.get(chat_id, 0)
     if now - last < COOLDOWN:
-        return # تجاهل الطلب
+        # نرسل إجابة فارغة سريعة هنا فقط لمنع خطأ "Query is too old" لو فشل الرد الأولي
+        try:
+            await query.answer()
+        except Exception:
+            pass
+        return 
 
     last_action[chat_id] = now
 
-    # 3. Lock: منع التعديل المتزامن (Race Condition)
+    # 2. Lock: منع التعديل المتزامن (Race Condition)
     lock = locks.setdefault(chat_id, asyncio.Lock())
     async with lock:
         
         # ------------------------------------
-        # منطق الانضمام (مع إصلاح التكرار)
+        # منطق الانضمام (مع إعادة إشعار التأكيد)
         # ------------------------------------
         if action == "join":
             if q["closed"]:
+                await query.answer("🚫 التسجيل مقفول.") # إعادة إشعار التأكيد
+                return
+            
+            # ... (بقية الشروط) ...
+            if user.id in q["removed"]:
+                await query.answer("🚫 تم حذفك من الدور. استنى الدور الجديد.") # إعادة إشعار التأكيد
                 return
 
             q["usernames"][user.id] = user.full_name
-
-            if user.id in q["removed"]:
-                return
-
+            confirmation_message = "" # المتغير الجديد لرسالة التأكيد
+            
             # تحديث الحالة
             if user.id in q["members"]:
                 q["members"].remove(user.id)
                 if user.id in q["all_joined"]:
                     q["all_joined"].remove(user.id)
+                confirmation_message = "❌ تم انسحابك."
             else:
                 q["members"].append(user.id)
                 q["all_joined"].add(user.id)
+                confirmation_message = "✅ تم تسجيلك!"
+            
+            # ✅ إعادة رسالة التأكيد المنبثقة (Pop-up)
+            try:
+                await query.answer(confirmation_message)
+            except Exception as e:
+                print(f"Warning: Could not answer query for confirmation: {e}")
+
 
             # بناء النص
             members_text = "\n".join([f"{i+1}. {q['usernames'].get(uid, 'مجهول')}" for i, uid in enumerate(q["members"])]) or "(فاضية)"
@@ -367,24 +387,29 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🎯 *القائمة الحالية:*\n{members_text}"
             )
             
-            # 🛑 الإصلاح: نحاول تعديل الرسالة، ونلغي أي Fallback لإرسال رسالة جديدة.
+            # محاولة تعديل الرسالة فقط (مفتاح الثبات)
             try:
                 await query.edit_message_text(text, reply_markup=make_main_keyboard(chat_id), parse_mode="Markdown")
             except BadRequest as e:
-                # هذا الخطأ شائع عند محاولة تعديل رسالة تم تعديلها بالفعل أو لم تتغير.
-                # هذا هو بالضبط ما نحتاجه: نتجاهل ونمنع التكرار.
                 print(f"Warning: could not edit message after join (likely concurrency or no change): {e}")
             except Exception as e:
                 print(f"CRITICAL ERROR: Failed to edit message after join (General Exception): {e}")
             return
         
         # ------------------------------------
-        # منطق الإدارة (نفس المنطق السابق، نعتمد على edit_message_text)
+        # منطق الإدارة (إعادة إشعار التأكيد)
         # ------------------------------------
 
         elif action == "remove_menu":
-            if not is_admin_or_creator(user.id, q): return
-            if not q["members"]: return
+            if not is_admin_or_creator(user.id, q): 
+                await query.answer("🚫 مش من صلاحياتك.")
+                return
+            if not q["members"]: 
+                await query.answer("📋 مفيش حد في الدور.")
+                return
+            
+            await query.answer()
+
             keyboard = []
             for i, uid in enumerate(q["members"]):
                 name = q["usernames"].get(uid, "مجهول")
@@ -398,14 +423,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif action == "remove_member":
-            if not is_admin_or_creator(user.id, q): return
+            if not is_admin_or_creator(user.id, q): 
+                await query.answer("🚫 مش من صلاحياتك.")
+                return
             try:
                 index = int(parts[2])
             except Exception:
+                await query.answer("❌ خطأ في الفهرس.")
                 return
+            
             if 0 <= index < len(q["members"]):
                 target = q["members"].pop(index)
                 q["removed"].add(target)
+                await query.answer("✅ تم حذف العضو.") # إعادة إشعار التأكيد
+            else:
+                 await query.answer("❌ خطأ في الفهرس.")
+                 return
 
             members_text = "\n".join([f"{i+1}. {q['usernames'].get(uid, 'مجهول')}" for i, uid in enumerate(q["members"])]) or "(فاضية)"
             text = (
@@ -421,6 +454,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif action == "cancel_remove":
+            await query.answer("تم الإلغاء ✅") # إعادة إشعار التأكيد
             members_text = "\n".join([f"{i+1}. {q['usernames'].get(uid, 'مجهول')}" for i, uid in enumerate(q["members"])]) or "(فاضية)"
             text = (
                 f"👤 *بدأ الدور:* {q['creator_name']}\n"
@@ -435,8 +469,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif action == "close":
-            if not is_admin_or_creator(user.id, q): return
+            if not is_admin_or_creator(user.id, q): 
+                await query.answer("🚫 مش من صلاحياتك.")
+                return
             q["closed"] = True
+            await query.answer("🔒 تم إنهاء الدور.") # إعادة إشعار التأكيد
             
             # بناء رسالة التلخيص النهائية
             all_joined = list(q["all_joined"])
@@ -472,9 +509,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif action == "manage_admins":
-            if user.id != q["creator"]: return
+            if user.id != q["creator"]: 
+                await query.answer("🚫 بس اللي بدأ الدور يقدر يدير المشرفين.")
+                return
+            
+            await query.answer()
+
             members_to_manage = [uid for uid in q["all_joined"] if uid != q["creator"]]
-            if not members_to_manage: return
+            if not members_to_manage: 
+                await query.answer("📋 مفيش حد يمكن تعيينه مشرفًا غيرك.")
+                return
+            
             keyboard = []
             for uid in members_to_manage:
                 name = q["usernames"].get(uid, "مجهول")
@@ -488,15 +533,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         elif action == "toggle_admin":
-            if user.id != q["creator"]: return
+            if user.id != q["creator"]: 
+                await query.answer("🚫 بس اللي بدأ الدور يقدر يعمل كده.")
+                return
             try:
                 target_id = int(parts[2])
             except Exception:
+                await query.answer("❌ خطأ في بيانات العضو.")
                 return
+            
+            message = ""
             if target_id in q["admins"]:
                 q["admins"].remove(target_id)
+                message = "❌ تم إزالة الإشراف."
             else:
                 q["admins"].add(target_id)
+                message = "⭐ تم تعيينه مشرفًا."
+            
+            await query.answer(message) # إعادة إشعار التأكيد
 
             members_to_manage = [uid for uid in q["all_joined"] if uid != q["creator"]]
             keyboard = []
